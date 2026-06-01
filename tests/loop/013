@@ -6,33 +6,22 @@
 . common/fio_common
 . common/loop_common
 
-HTLB_MNT=/mnt/hugetlb_ublksrv
-HTLB_BUF=${HTLB_MNT}/ublk_shmem_buf
-
-_setup_hugetlb() {
-	echo 10 > /proc/sys/vm/nr_hugepages
-	local avail=$(cat /proc/sys/vm/nr_hugepages)
-	if [ "$avail" -lt 1 ]; then
-		echo "SKIP: no hugepages available"
-		return 1
-	fi
-
-	mkdir -p ${HTLB_MNT}
-	mount -t hugetlbfs none ${HTLB_MNT} 2>/dev/null
-	# Allocate the buffer file
-	fallocate -l 4M ${HTLB_BUF}
-	return 0
-}
-
-_cleanup_hugetlb() {
-	rm -f ${HTLB_BUF}
-	umount ${HTLB_MNT} 2>/dev/null
-	rmdir ${HTLB_MNT} 2>/dev/null
-}
+HTLB_SH=${TEST_DIR}/../utils/htlb.sh
+# fio_common's __run_fio_libaio uses iodepth=128 and the perf sweep goes up
+# to 512k bs, so size the hugetlb buffer for 128 * 512k = 64M plus headroom.
+HTLB_SIZE_MB=128
+HTLB_PARENT=/tmp
+HTLB_BUF=${HTLB_PARENT}/huge_${HTLB_SIZE_MB}/ublk_shmem_buf
 
 echo "run loop shmem_zc (hugetlb) test"
 
-if ! _setup_hugetlb; then
+if [ ! -x "$HTLB_SH" ]; then
+	echo "SKIP: $HTLB_SH not found"
+	exit 0
+fi
+
+if ! "$HTLB_SH" alloc $HTLB_SIZE_MB $HTLB_PARENT >/dev/null; then
+	echo "SKIP: hugetlb alloc failed"
 	exit 0
 fi
 
@@ -43,4 +32,4 @@ export EXTRA_FIO_OPTS="--mem=mmaphuge:${HTLB_BUF}"
 __run_dev_perf 1
 
 _remove_loop_image $file
-_cleanup_hugetlb
+"$HTLB_SH" free $HTLB_SIZE_MB $HTLB_PARENT >/dev/null
